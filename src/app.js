@@ -501,9 +501,12 @@ function openChannel(pin) {
 
 // Host: broadcast full state snapshot + re-render host view
 function hostBroadcast() {
-  if (!localPlayer.isHost || !bc) return;
-  bc.postMessage({ type: MSG.STATE_SYNC, state: roomState });
-  renderCurrentView();
+  if (localPlayer.isHost && bc) {
+    bc.postMessage({ type: MSG.STATE_SYNC, state: roomState });
+  }
+  if (localPlayer.isHost) {
+    renderCurrentView();
+  }
 }
 
 // Host: broadcast only timer value — lightweight, does not trigger full re-render on players
