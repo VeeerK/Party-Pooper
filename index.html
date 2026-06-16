@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Party Pooper</title>
+  <meta name="description" content="The premium party game platform for four fast social mini-games.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="src/style.css">
+</head>
+<body>
+
+  <!-- Ambient background -->
+  <div class="bg-mesh" aria-hidden="true">
+    <div class="mesh-orb orb-1"></div>
+    <div class="mesh-orb orb-2"></div>
+    <div class="mesh-orb orb-3"></div>
+  </div>
+
+  <div id="app">
+
+    <!-- ═══════════════════════════════════════════════
+         VIEW: WELCOME
+    ═══════════════════════════════════════════════ -->
+    <div id="v-welcome" class="view active">
+      <div class="welcome-layout">
+        <div class="brand-block">
+          <div class="brand-mark">PP</div>
+          <h1 class="brand-name">Party<span class="brand-accent">Pooper</span></h1>
+          <p class="brand-sub">The confident, vibe-first group game.</p>
+        </div>
+
+        <div class="welcome-actions">
+          <button id="btn-create-room" class="btn btn-primary btn-xl">
+            <svg class="btn-icon" viewBox="0 0 20 20" fill="none"><path d="M10 2a8 8 0 100 16A8 8 0 0010 2zm1 11H9V9h2v4zm0-6H9V5h2v2z" fill="currentColor"/></svg>
+            Create Room
+          </button>
+
+          <div class="separator"><span>or join with a code</span></div>
+
+          <div class="join-row">
+            <input id="inp-join-pin" class="input-pin" type="text" maxlength="5" placeholder="12345" autocomplete="off" inputmode="numeric">
+            <button id="btn-join-room" class="btn btn-secondary">Join</button>
+          </div>
+        </div>
+
+        <button id="btn-content-editor" class="link-btn">Manage content bank</button>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════
+         VIEW: PROFILE SETUP
+    ═══════════════════════════════════════════════ -->
+    <div id="v-profile" class="view">
+      <div class="view-header">
+        <button class="back-btn" data-back="v-welcome">
+          <svg viewBox="0 0 20 20" fill="none"><path d="M13 15l-5-5 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <span class="view-title">Set Up Profile</span>
+      </div>
+
+      <div class="profile-form">
+        <div class="avatar-picker">
+          <div id="avatar-display" class="avatar-lg"></div>
+          <div class="avatar-nav">
+            <button id="btn-avatar-prev" class="avatar-nav-btn">
+              <svg viewBox="0 0 20 20" fill="none"><path d="M13 15l-5-5 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
+            <span id="avatar-label" class="avatar-nav-label">Style 1</span>
+            <button id="btn-avatar-next" class="avatar-nav-btn">
+              <svg viewBox="0 0 20 20" fill="none"><path d="M7 5l5 5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label" for="inp-name">Your name</label>
+          <input id="inp-name" class="input-text" type="text" maxlength="16" placeholder="Enter name..." autocomplete="off">
+        </div>
+
+        <button id="btn-confirm-profile" class="btn btn-primary">Continue</button>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════
+         VIEW: LOBBY
+    ═══════════════════════════════════════════════ -->
+    <div id="v-lobby" class="view">
+      <div class="lobby-layout">
+        <!-- Room info bar -->
+        <div class="room-bar">
+          <div class="room-pin-block">
+            <span class="room-pin-label">Room PIN</span>
+            <span id="lbl-room-pin" class="room-pin">—</span>
+          </div>
+          <div id="room-qr-wrap" class="room-qr">
+            <canvas id="qr-canvas" width="80" height="80"></canvas>
+          </div>
+        </div>
+
+        <!-- Players roster -->
+        <div class="section-heading">
+          Players <span id="player-count" class="count-badge">0</span>
+        </div>
+        <div id="players-grid" class="players-grid"></div>
+
+        <!-- ── HOST ONLY SECTION ── -->
+        <div id="host-panel" class="host-panel hidden">
+          <div class="lobby-controls" style="display: flex; justify-content: flex-end; margin-bottom: var(--sp-xs);">
+            <button id="btn-add-bots" class="btn btn-secondary btn-sm">Add Bots</button>
+          </div>
+
+          <div class="section-heading">Select Game Mode</div>
+
+          <div class="game-grid">
+            <div class="game-card" data-game="yseem">
+              <div class="game-card-icon yseem">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+              </div>
+              <div class="game-card-info">
+                <span class="game-card-title">You Seem the Type</span>
+                <span class="game-card-desc">Vibe profiling & dramatic group reveals.</span>
+              </div>
+            </div>
+
+            <div class="game-card" data-game="excuse">
+              <div class="game-card-icon excuse">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
+                </svg>
+              </div>
+              <div class="game-card-info">
+                <span class="game-card-title">Excuse Me</span>
+                <span class="game-card-desc">Hilarious excuse-writing showdown.</span>
+              </div>
+            </div>
+
+            <div class="game-card" data-game="big3">
+              <div class="game-card-icon big3">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M2 20h20M14 20V4a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v16M6 20v-8a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v8M18 20v-6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v6"/>
+                </svg>
+              </div>
+              <div class="game-card-info">
+                <span class="game-card-title">The Big 3</span>
+                <span class="game-card-desc">Physical mini-challenges and crew voting.</span>
+              </div>
+            </div>
+
+            <div class="game-card" data-game="mission">
+              <div class="game-card-icon mission">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"/>
+                  <circle cx="12" cy="12" r="6"/>
+                  <circle cx="12" cy="12" r="2"/>
+                  <line x1="12" y1="1" x2="12" y2="3"/>
+                  <line x1="12" y1="21" x2="12" y2="23"/>
+                  <line x1="1" y1="12" x2="3" y2="12"/>
+                  <line x1="21" y1="12" x2="23" y2="12"/>
+                </svg>
+              </div>
+              <div class="game-card-info">
+                <span class="game-card-title">Mission Improbable</span>
+                <span class="game-card-desc">Secret physical tasks and real-life callouts.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── HOST ONLY SETTINGS MODAL ── -->
+        <div id="settings-modal" class="settings-modal hidden">
+          <div class="settings-modal-backdrop" id="settings-modal-backdrop"></div>
+          <div class="settings-modal-container">
+            <button id="settings-modal-close" class="settings-modal-close-btn" aria-label="Close">
+              <svg viewBox="0 0 20 20" fill="none" style="width: 14px; height: 14px;"><path d="M6 6l8 8M14 6l-8 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+            </button>
+            
+            <div class="settings-modal-header">
+              <div class="settings-modal-icon-wrap" id="modal-game-icon"></div>
+              <div class="settings-modal-meta">
+                <h2 class="settings-modal-title" id="modal-game-title">Game Settings</h2>
+                <p class="settings-modal-subtitle">Configure options before starting</p>
+              </div>
+            </div>
+
+            <div class="settings-modal-body">
+              <!-- Settings panels per game -->
+              <div id="settings-yseem" class="settings-panel">
+                <div class="setting-row">
+                  <span class="setting-key">Questions</span>
+                  <input type="number" class="setting-num" id="yseem-rounds" min="3" max="15" value="5">
+                </div>
+                <div class="setting-row">
+                  <span class="setting-key">Voting time</span>
+                  <select class="setting-select" id="yseem-time">
+                    <option value="15">15 sec</option>
+                    <option value="30" selected>30 sec</option>
+                    <option value="45">45 sec</option>
+                    <option value="60">60 sec</option>
+                  </select>
+                </div>
+                <div class="setting-row">
+                  <span class="setting-key">Show results</span>
+                  <select class="setting-select" id="yseem-reveal">
+                    <option value="each" selected>After each</option>
+                    <option value="end">End only</option>
+                  </select>
+                </div>
+              </div>
+
+              <div id="settings-excuse" class="settings-panel hidden">
+                <div class="setting-row">
+                  <span class="setting-key">Rounds</span>
+                  <input type="number" class="setting-num" id="excuse-rounds" min="2" max="10" value="3">
+                </div>
+                <div class="setting-row">
+                  <span class="setting-key">Writing time</span>
+                  <select class="setting-select" id="excuse-time">
+                    <option value="30">30 sec</option>
+                    <option value="60" selected>60 sec</option>
+                    <option value="90">90 sec</option>
+                  </select>
+                </div>
+                <div class="setting-row">
+                  <span class="setting-key">Anonymous answers</span>
+                  <label class="toggle"><input type="checkbox" id="excuse-anon" checked><span class="toggle-track"></span></label>
+                </div>
+                <div class="setting-row">
+                  <span class="setting-key">Bonus rounds</span>
+                  <label class="toggle"><input type="checkbox" id="excuse-bonus" checked><span class="toggle-track"></span></label>
+                </div>
+              </div>
+
+              <div id="settings-big3" class="settings-panel hidden">
+                <div class="setting-row">
+                  <span class="setting-key">Rounds</span>
+                  <input type="number" class="setting-num" id="big3-rounds" min="1" max="8" value="3">
+                </div>
+                <div class="setting-row">
+                  <span class="setting-key">Challenge time</span>
+                  <select class="setting-select" id="big3-time">
+                    <option value="20">20 sec</option>
+                    <option value="30" selected>30 sec</option>
+                    <option value="45">45 sec</option>
+                    <option value="60">60 sec</option>
+                  </select>
+                </div>
+                <div class="setting-row">
+                  <span class="setting-key">Performers</span>
+                  <select class="setting-select" id="big3-performers">
+                    <option value="3" selected>Top 3</option>
+                    <option value="2">Top 2 (Duel)</option>
+                  </select>
+                </div>
+                <div class="setting-row">
+                  <span class="setting-key">Penalty wrong guess</span>
+                  <label class="toggle"><input type="checkbox" id="big3-penalty"><span class="toggle-track"></span></label>
+                </div>
+              </div>
+
+              <div id="settings-mission" class="settings-panel hidden">
+                <div class="setting-row">
+                  <span class="setting-key">Mode</span>
+                  <select class="setting-select" id="mission-mode">
+                    <option value="solo" selected>Solo</option>
+                    <option value="duo">Duo</option>
+                    <option value="trio">Trio</option>
+                  </select>
+                </div>
+                <div class="setting-row">
+                  <span class="setting-key">Team missions</span>
+                  <input type="number" class="setting-num" id="mission-team-count" min="1" max="5" value="3">
+                </div>
+                <div class="setting-row">
+                  <span class="setting-key">Secret missions</span>
+                  <label class="toggle"><input type="checkbox" id="mission-personal" checked><span class="toggle-track"></span></label>
+                </div>
+                <div class="setting-row">
+                  <span class="setting-key">Callout penalty</span>
+                  <label class="toggle"><input type="checkbox" id="mission-call-penalty" checked><span class="toggle-track"></span></label>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-modal-footer" style="padding: var(--sp-md);">
+              <button id="btn-start-game" class="btn btn-primary btn-full btn-xl">Start Game</button>
+            </div>
+          </div>
+
+        <!-- ── PLAYER ONLY SECTION ── -->
+        <div id="player-wait" class="player-wait hidden">
+          <div class="wait-card">
+            <div class="wait-indicator"></div>
+            <p class="wait-text">Waiting for host to start the game...</p>
+            <div id="wait-game-name" class="wait-game-name"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════
+         VIEW: GAME CONTAINER
+    ═══════════════════════════════════════════════ -->
+    <div id="v-game" class="view">
+      <!-- All game content is rendered here dynamically -->
+      <div id="game-root"></div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════
+         VIEW: RESULTS
+    ═══════════════════════════════════════════════ -->
+    <div id="v-results" class="view">
+      <div id="results-root"></div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════
+         VIEW: CONTENT EDITOR
+    ═══════════════════════════════════════════════ -->
+    <div id="v-editor" class="view">
+      <div class="view-header">
+        <button class="back-btn" data-back="v-welcome">
+          <svg viewBox="0 0 20 20" fill="none"><path d="M13 15l-5-5 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <span class="view-title">Content Bank</span>
+      </div>
+
+      <div class="editor-tabs">
+        <button class="etab active" data-etab="yseem">You Seem</button>
+        <button class="etab" data-etab="excuse">Excuse Me</button>
+        <button class="etab" data-etab="big3">Big 3</button>
+        <button class="etab" data-etab="mission">Mission</button>
+      </div>
+
+      <div id="editor-list" class="editor-list"></div>
+
+      <div class="editor-add">
+        <input id="inp-new-content" class="input-text" type="text" placeholder="Add a custom prompt..." autocomplete="off">
+        <button id="btn-add-content" class="btn btn-primary btn-sm">Add</button>
+      </div>
+
+      <div class="editor-footer">
+        <button id="btn-reset-content" class="link-btn">Reset to defaults</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Toast notifications -->
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>

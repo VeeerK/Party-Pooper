@@ -1,0 +1,20 @@
+{
+  "name": "party-pooper",
+  "version": "1.0.0",
+  "description": "Premium Party Game Platform with four mini-games",
+  "main": "index.html",
+  "scripts": {
+    "dev": "http-server -p 3000 -c-1",
+    "start": "http-server -p 3000 -c-1"
+  },
+  "dependencies": {
+    "http-server": "^14.1.1"
+  },
+  "keywords": [
+    "party-game",
+    "multiplayer",
+    "games"
+  ],
+  "author": "Antigravity",
+  "license": "MIT"
+}
