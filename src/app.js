@@ -496,39 +496,64 @@ let _sendQueue = [];
 // never dropped.
 function bcSend(msg) {
   if (!bc) return;
-  const data = JSON.stringify(msg);
-  if (bc.readyState === 1) bc.send(data);
-  else if (bc.readyState === 0) _sendQueue.push(data);
+  const payload = typeof msg === 'string' ? JSON.parse(msg) : msg;
+  if (bc.state === 'joined') {
+    bc.send({ type: 'broadcast', event: 'msg', payload: payload });
+  } else {
+    _sendQueue.push(payload);
+  }
 }
 
 function openChannel(pin) {
-  if (bc) { try { bc.close(); } catch(_) {} }
+  if (bc) { try { supabaseClient.removeChannel(bc); } catch(_) {} }
   _sendQueue = [];
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  bc = new WebSocket(`${proto}//${location.host}`);
+  
+  bc = supabaseClient.channel('room:' + pin, {
+    config: {
+      broadcast: { ack: false, self: false },
+      presence: { key: localPlayer.id }
+    }
+  });
 
-  bc.onopen = () => {
-    // Register with the server for this room first, then flush queued messages
-    bc.send(JSON.stringify({ type: 'HELLO', room: String(pin), playerId: localPlayer.id, isHost: localPlayer.isHost }));
-    const q = _sendQueue; _sendQueue = [];
-    q.forEach(d => { try { bc.send(d); } catch(_) {} });
-  };
-
-  bc.onmessage = (event) => {
-    let msg;
-    try { msg = JSON.parse(event.data); } catch(_) { return; }
+  bc.on('broadcast', { event: 'msg' }, (payload) => {
+    let msg = payload.payload;
     if (!msg) return;
-    // Stopwatch sync — lightweight, only patches display element
     if (msg.type === 'SW_SYNC' && !localPlayer.isHost) {
       const el = document.getElementById('sw-display');
       if (el) el.textContent = fmtTime(msg.val || 0);
       return;
     }
     handleBCMessage({ data: msg });
-  };
+  });
+
+  bc.on('presence', { event: 'leave' }, ({ key, leftPresences }) => {
+    if (localPlayer.isHost) {
+      leftPresences.forEach(p => {
+        handleBCMessage({ data: { type: MSG.PLAYER_LEAVE, playerId: p.playerId } });
+      });
+    }
+  });
+
+  bc.subscribe((status) => {
+    if (status === 'SUBSCRIBED') {
+      console.log("[Supabase] SUBSCRIBED to room:" + pin);
+      bc.track({ playerId: localPlayer.id });
+
+      bc.send({ type: 'broadcast', event: 'msg', payload: { type: 'HELLO', room: String(pin), playerId: localPlayer.id, isHost: localPlayer.isHost } });
+      const q = _sendQueue; _sendQueue = [];
+      q.forEach(d => { try { bc.send({ type: 'broadcast', event: 'msg', payload: d }); } catch(_) {} });
+    } else if (status === 'CLOSED') {
+      console.log("[Supabase] CLOSED");
+    } else if (status === 'CHANNEL_ERROR') {
+      console.error("[Supabase] CHANNEL_ERROR");
+    } else if (status === 'TIMED_OUT') {
+      console.log("[Supabase] TIMED_OUT... attempting to reconnect.");
+    }
+  });
 
   window.addEventListener('beforeunload', () => {
     bcSend({ type: MSG.PLAYER_LEAVE, playerId: localPlayer.id });
+    try { supabaseClient.removeChannel(bc); } catch(_) {}
   }, { once: true });
 }
 

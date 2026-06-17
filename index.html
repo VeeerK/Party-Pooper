@@ -292,6 +292,12 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    const SUPABASE_URL = 'https://agvlhpxqlsmrxztyazct.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_bM7psz4WMmkmo1WIQ6SFfw_0ucsD2nF';
+    window.supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  </script>
   <script src="src/app.js"></script>
 </body>
 </html>
