@@ -438,6 +438,7 @@ function renderQR(canvas, url, pin) {
 // LOCAL PLAYER
 // ═══════════════════════════════════════════════════════════
 let localPlayer = { id: '', name: '', avatarId: 0, isHost: false };
+let mySecretMission = null;
 
 function loadLocalPlayer() {
   try {
@@ -480,39 +481,86 @@ const MSG = {
   TIMER_SYNC:   'TIMER_SYNC',   // lightweight — only updates timer display
   PLAYER_ACTION:'PLAYER_ACTION',
   PLAYER_LEAVE: 'PLAYER_LEAVE',
+  SECRET:       'SECRET',       // host -> specific player: their secret mission
 };
+
+let _sendQueue = [];
+
+// Transport-agnostic send. Queues messages while the socket is opening so that
+// host broadcasts / join requests issued immediately after openChannel() are
+// never dropped.
+function bcSend(msg) {
+  if (!bc) return;
+  const data = JSON.stringify(msg);
+  if (bc.readyState === 1) bc.send(data);
+  else if (bc.readyState === 0) _sendQueue.push(data);
+}
 
 function openChannel(pin) {
   if (bc) { try { bc.close(); } catch(_) {} }
-  bc = new BroadcastChannel('pp4_' + pin);
+  _sendQueue = [];
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  bc = new WebSocket(`${proto}//${location.host}`);
+
+  bc.onopen = () => {
+    // Register with the server for this room first, then flush queued messages
+    bc.send(JSON.stringify({ type: 'HELLO', room: String(pin), playerId: localPlayer.id, isHost: localPlayer.isHost }));
+    const q = _sendQueue; _sendQueue = [];
+    q.forEach(d => { try { bc.send(d); } catch(_) {} });
+  };
+
   bc.onmessage = (event) => {
+    let msg;
+    try { msg = JSON.parse(event.data); } catch(_) { return; }
+    if (!msg) return;
     // Stopwatch sync — lightweight, only patches display element
-    if (event.data?.type === 'SW_SYNC' && !localPlayer.isHost) {
+    if (msg.type === 'SW_SYNC' && !localPlayer.isHost) {
       const el = document.getElementById('sw-display');
-      if (el) el.textContent = fmtTime(event.data.val || 0);
+      if (el) el.textContent = fmtTime(msg.val || 0);
       return;
     }
-    handleBCMessage(event);
+    handleBCMessage({ data: msg });
   };
+
   window.addEventListener('beforeunload', () => {
-    if (bc) bc.postMessage({ type: MSG.PLAYER_LEAVE, playerId: localPlayer.id });
+    bcSend({ type: MSG.PLAYER_LEAVE, playerId: localPlayer.id });
   }, { once: true });
 }
 
-// Host: broadcast full state snapshot + re-render host view
+// Host: broadcast full state snapshot + re-render host view.
+// Secret missions are stripped from the broadcast during active play so they
+// are never exposed to other players. They are only revealed at game end.
 function hostBroadcast() {
   if (localPlayer.isHost && bc) {
-    bc.postMessage({ type: MSG.STATE_SYNC, state: roomState });
+    bcSend({ type: MSG.STATE_SYNC, state: sanitizeStateForBroadcast(roomState) });
   }
   if (localPlayer.isHost) {
     renderCurrentView();
   }
 }
 
+function sanitizeStateForBroadcast(state) {
+  if (!state.gameData || !state.gameData.personalMissions || state.view === 'results') {
+    return state;
+  }
+  return { ...state, gameData: { ...state.gameData, personalMissions: {} } };
+}
+
+// Host: deliver each player their own secret mission privately.
+function hostSendSecrets() {
+  if (!localPlayer.isHost || !bc) return;
+  const gd = roomState.gameData;
+  if (!gd || !gd.personalMissions) return;
+  roomState.players.forEach(p => {
+    const mission = gd.personalMissions[p.id];
+    if (mission) bcSend({ type: MSG.SECRET, playerId: p.id, mission });
+  });
+}
+
 // Host: broadcast only timer value — lightweight, does not trigger full re-render on players
 function hostTimerSync(val, total) {
   if (!localPlayer.isHost || !bc) return;
-  bc.postMessage({ type: MSG.TIMER_SYNC, val, total });
+  bcSend({ type: MSG.TIMER_SYNC, val, total });
 }
 
 function playerSend(action, data) {
@@ -520,7 +568,7 @@ function playerSend(action, data) {
     handlePlayerAction(localPlayer.id, action, data);
     return;
   }
-  if (bc) bc.postMessage({ type: MSG.PLAYER_ACTION, playerId: localPlayer.id, action, data });
+  if (bc) bcSend({ type: MSG.PLAYER_ACTION, playerId: localPlayer.id, action, data });
 }
 
 function handleBCMessage(event) {
@@ -533,7 +581,7 @@ function handleBCMessage(event) {
       if (!roomState.players.find(p => p.id === msg.player.id)) {
         roomState.players.push(msg.player);
       }
-      bc.postMessage({ type: MSG.JOIN_CONFIRM, playerId: msg.player.id, state: roomState });
+      bcSend({ type: MSG.JOIN_CONFIRM, playerId: msg.player.id, state: roomState });
       hostBroadcast();
       break;
     }
@@ -565,6 +613,13 @@ function handleBCMessage(event) {
       if (!localPlayer.isHost) return;
       roomState.players = roomState.players.filter(p => p.id !== msg.playerId);
       hostBroadcast();
+      break;
+    }
+    case MSG.SECRET: {
+      if (localPlayer.isHost) return;
+      if (msg.playerId !== localPlayer.id) return;
+      mySecretMission = msg.mission;
+      renderCurrentView();
       break;
     }
   }
@@ -640,7 +695,7 @@ function startStopwatch() {
     const el = document.getElementById('sw-display');
     if (el) el.textContent = fmtTime(gd.stopwatchVal);
     // Sync to players
-    if (bc) bc.postMessage({ type: 'SW_SYNC', val: gd.stopwatchVal });
+    if (bc) bcSend({ type: 'SW_SYNC', val: gd.stopwatchVal });
   }, 1000);
 }
 
@@ -712,7 +767,7 @@ function renderLobby() {
   // Players grid — only rebuild if player list changed (avoid thrashing)
   renderPlayersGrid();
 
-  const hostPanel  = document.getElementById('host-panel');
+  const hostPanel  = document.getElementById('host-controls');
   const playerWait = document.getElementById('player-wait');
 
   if (localPlayer.isHost) {
@@ -1081,14 +1136,14 @@ function renderYouseemSuspense(gd, root) {
           <circle cx="12" cy="12" r="3"/>
         </svg>
       </div>
-      <h2 style="font-size: 1.4rem; font-weight: 900; margin-top: 24px; color: #fff;">Votes Are In!</h2>
+      <h2 style="font-size: 1.4rem; font-weight: 900; margin-top: 24px; color: var(--text-primary);">Votes Are In!</h2>
       <p class="text-secondary" style="max-width: 280px; font-size: 0.88rem; margin-top: 8px;">
         ${localPlayer.isHost ? 'Prepare the crew. Press Reveal to show the vibe!' : 'Prepare yourself. The host is about to reveal the vibe...'}
       </p>
     </div>
     ${localPlayer.isHost ? `
       <div class="game-footer">
-        <button id="btn-yseem-reveal" class="btn btn-primary btn-full btn-xl" style="background: var(--accent-yseem); box-shadow: 0 0 20px rgba(124,106,245,0.3);">
+        <button id="btn-yseem-reveal" class="btn btn-primary btn-full btn-xl" style="background: var(--accent-yseem); box-shadow: 4px 4px 0 #111;">
           Reveal Vibe
         </button>
       </div>
@@ -1109,7 +1164,7 @@ function renderYouseemDrumroll(gd, root) {
         <div class="drumroll-stick right"></div>
         <div class="drumroll-wave"></div>
       </div>
-      <h2 class="shimmer-text" style="font-size: 1.5rem; font-weight: 900; margin-top: var(--sp-lg); text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent-yseem);">
+      <h2 class="shimmer-text" style="font-size: 1.5rem; font-weight: 900; margin-top: var(--sp-lg); text-transform: uppercase; letter-spacing: 0.05em;">
         Drumroll Please...
       </h2>
     </div>`;
@@ -1135,15 +1190,15 @@ function renderYouseemReveal(gd, root) {
       </div>
 
       ${winnerNames.length > 0 ? `
-        <div class="consequence-card animate-pop" style="margin-bottom: var(--sp-md); border: 2px solid var(--accent-yseem); border-radius: var(--r-xl); padding: var(--sp-lg); background: linear-gradient(135deg, rgba(124,106,245,0.1) 0%, rgba(7,9,15,0.8) 100%); text-align: center; box-shadow: 0 8px 32px rgba(124,106,245,0.25);">
+        <div class="consequence-card animate-pop" style="margin-bottom: var(--sp-md); border: 3px solid var(--accent-yseem); box-shadow: 6px 6px 0 var(--accent-yseem);">
           <div class="prompt-eyebrow" style="color: var(--accent-yseem);">The Vibe Has Decided</div>
-          <h3 class="consequence-title" style="font-size: 1.6rem; font-weight: 900; margin: 12px 0 6px 0; color: #fff;">
+          <h3 class="consequence-title" style="font-size: 1.6rem; font-weight: 900; margin: 12px 0 6px 0; color: var(--text-primary);">
             ${winnerNames.join(' & ')}
           </h3>
           <p class="consequence-desc" style="font-size: 0.88rem; color: var(--text-secondary);">
             fits this profile perfectly!
           </p>
-          <div class="consequence-badge" style="display: inline-block; margin-top: 14px; padding: 6px 16px; background: var(--accent-yseem); color: #fff; font-weight: 800; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.05em; border-radius: var(--r-pill); box-shadow: 0 0 15px rgba(124,106,245,0.4);">
+          <div class="consequence-badge" style="display: inline-block; margin-top: 14px; padding: 6px 16px; background: var(--accent-yseem); color: #fff; font-weight: 800; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.05em; border-radius: var(--r-pill); border: 2px solid var(--border); box-shadow: 3px 3px 0 #111;">
             Consequence: Take a shot or face a challenge!
           </div>
         </div>
@@ -1173,7 +1228,7 @@ function renderYouseemReveal(gd, root) {
 
     ${localPlayer.isHost ? `
       <div class="game-footer">
-        <button id="btn-yseem-next" class="btn btn-primary btn-full btn-xl" style="background: var(--accent-yseem); box-shadow: 0 0 20px rgba(124,106,245,0.25);">
+        <button id="btn-yseem-next" class="btn btn-primary btn-full btn-xl" style="background: var(--accent-yseem); box-shadow: 4px 4px 0 #111;">
           ${gd.round + 1 >= gd.totalRounds ? 'Final Results' : 'Next Question'}
         </button>
       </div>
@@ -1329,16 +1384,19 @@ function renderExcuseWrite(gd, root) {
   const mySub = gd.submissions.find(s => s.authorId === localPlayer.id);
 
   const sentinel = root.dataset.excuseStage;
-  if (sentinel === 'write' && mySub) {
-    // Already submitted — let it render submitted state
-  } else if (sentinel === 'write' && !mySub) {
-    // Only patch counter, don't destroy DOM
+  const alreadySubmitted = root.dataset.excuseSubmitted === '1';
+
+  // While we remain in the write stage, never tear down the DOM — only patch the
+  // live counter. This preserves textarea focus, cursor position and scroll
+  // while the countdown ticks and other players submit.
+  if (sentinel === 'write' && (!mySub || alreadySubmitted)) {
     const cntEl = document.getElementById('excuse-submit-count');
     if (cntEl) cntEl.textContent = gd.submissions.length + ' / ' + roomState.players.length + ' submitted';
     return;
   }
 
   root.dataset.excuseStage = 'write';
+  root.dataset.excuseSubmitted = mySub ? '1' : '0';
 
   root.innerHTML = `
     <div class="game-hdr" data-game="excuse">
@@ -1454,19 +1512,19 @@ function renderExcuseSuspense(gd, root) {
       <span class="round-badge">Round ${gd.round + 1} / ${gd.totalRounds}</span>
     </div>
     <div class="game-content" style="justify-content: center; align-items: center; text-align: center;">
-      <div class="suspense-pulse-circle" style="background: rgba(6,201,196,0.06); border-color: rgba(6,201,196,0.2); animation-name: pulse-ring-excuse;">
+      <div class="suspense-pulse-circle" style="background: rgba(245,158,11,0.06); border-color: rgba(245,158,11,0.25); animation-name: pulse-ring-excuse;">
         <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent-excuse)" stroke-width="1.5" style="width: 44px; height: 44px;">
           <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
         </svg>
       </div>
-      <h2 style="font-size: 1.4rem; font-weight: 900; margin-top: 24px; color: #fff;">Deliberation Complete</h2>
+      <h2 style="font-size: 1.4rem; font-weight: 900; margin-top: 24px; color: var(--text-primary);">Deliberation Complete</h2>
       <p class="text-secondary" style="max-width: 280px; font-size: 0.88rem; margin-top: 8px;">
         ${localPlayer.isHost ? 'Reveal the verdicts. Press button to show the winner and the loser!' : 'The host is about to reveal the funniest and the worst excuses...'}
       </p>
     </div>
     ${localPlayer.isHost ? `
       <div class="game-footer">
-        <button id="btn-excuse-reveal" class="btn btn-primary btn-full btn-xl" style="background: var(--accent-excuse); color: var(--text-inverse); box-shadow: 0 0 20px rgba(6,201,196,0.3);">
+        <button id="btn-excuse-reveal" class="btn btn-primary btn-full btn-xl" style="background: var(--accent-excuse); color: var(--text-primary); box-shadow: 4px 4px 0 #111;">
           Reveal Verdicts
         </button>
       </div>
@@ -1485,9 +1543,9 @@ function renderExcuseDrumroll(gd, root) {
       <div class="drumroll-animation" style="border-bottom-color: var(--accent-excuse);">
         <div class="drumroll-stick left"></div>
         <div class="drumroll-stick right"></div>
-        <div class="drumroll-wave" style="background: radial-gradient(ellipse, rgba(6,201,196,0.4), transparent);"></div>
+        <div class="drumroll-wave" style="background: radial-gradient(ellipse, rgba(245,158,11,0.5), transparent);"></div>
       </div>
-      <h2 class="shimmer-text" style="font-size: 1.5rem; font-weight: 900; margin-top: var(--sp-lg); text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent-excuse); background-image: linear-gradient(90deg, var(--text-primary), var(--accent-excuse), var(--text-primary));">
+      <h2 class="shimmer-text" style="font-size: 1.5rem; font-weight: 900; margin-top: var(--sp-lg); text-transform: uppercase; letter-spacing: 0.05em; background-image: linear-gradient(90deg, var(--text-primary), var(--accent-excuse), var(--text-primary));">
         Deliberation Reveal...
       </h2>
     </div>`;
@@ -1509,19 +1567,19 @@ function renderExcuseReveal(gd, root) {
       ${gd.isBonus ? `<div class="bonus-banner" style="margin-bottom: var(--sp-sm);">Bonus Round — Double Points</div>` : ''}
 
       ${winner ? `
-        <div class="winner-card animate-pop" style="border: 2px solid var(--accent-excuse); border-radius: var(--r-xl); padding: var(--sp-md); background: linear-gradient(135deg, rgba(6,201,196,0.1) 0%, rgba(7,9,15,0.8) 100%); margin-bottom: var(--sp-md); box-shadow: 0 8px 24px rgba(6,201,196,0.15); text-align: center;">
+        <div class="winner-card animate-pop" style="margin-bottom: var(--sp-md);">
           <div class="prompt-eyebrow" style="color: var(--accent-excuse);">Funniest Excuse (Winner)</div>
-          <div class="winner-text" style="font-size: 1.15rem; color: #fff; line-height: 1.35; margin: var(--sp-xs) 0;">"${h(winner.text)}"</div>
+          <div class="winner-text" style="font-size: 1.15rem; line-height: 1.35; margin: var(--sp-xs) 0;">"${h(winner.text)}"</div>
           <div class="winner-by" style="font-weight: 700; color: var(--text-primary);">— ${h(winner.authorName)}</div>
         </div>
       ` : ''}
 
       ${loser ? `
-        <div class="loser-card animate-pop" style="border: 2px solid var(--danger); border-radius: var(--r-xl); padding: var(--sp-md); background: linear-gradient(135deg, rgba(232,65,154,0.08) 0%, rgba(7,9,15,0.8) 100%); margin-bottom: var(--sp-lg); box-shadow: 0 8px 24px rgba(232,65,154,0.15); text-align: center;">
+        <div class="loser-card animate-pop" style="margin-bottom: var(--sp-lg);">
           <div class="prompt-eyebrow" style="color: var(--danger);">Worst Excuse (Consequence)</div>
-          <div class="winner-text" style="font-size: 1.05rem; color: #fff; line-height: 1.35; margin: var(--sp-xs) 0; opacity: 0.85;">"${h(loser.text)}"</div>
+          <div class="winner-text" style="font-size: 1.05rem; line-height: 1.35; margin: var(--sp-xs) 0; opacity: 0.85;">"${h(loser.text)}"</div>
           <div class="winner-by" style="font-weight: 700; color: var(--text-primary); margin-bottom: 8px;">— ${h(loser.authorName)}</div>
-          <div style="display: inline-block; padding: 4px 12px; background: var(--danger); color: #fff; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; border-radius: var(--r-pill);">
+          <div style="display: inline-block; padding: 4px 12px; background: var(--danger); color: #fff; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; border-radius: var(--r-pill); border: 2px solid var(--border); box-shadow: 2px 2px 0 #111;">
             Consequence: Take a shot or face a dare!
           </div>
         </div>
@@ -1546,7 +1604,7 @@ function renderExcuseReveal(gd, root) {
 
     ${localPlayer.isHost ? `
       <div class="game-footer">
-        <button id="btn-excuse-next" class="btn btn-primary btn-full btn-xl" style="background: var(--accent-excuse); color: var(--text-inverse); box-shadow: 0 0 20px rgba(6,201,196,0.25);">
+        <button id="btn-excuse-next" class="btn btn-primary btn-full btn-xl" style="background: var(--accent-excuse); color: var(--text-primary); box-shadow: 4px 4px 0 #111;">
           ${gd.round + 1 >= gd.totalRounds ? 'Final Results' : 'Next Round'}
         </button>
       </div>
@@ -1694,18 +1752,18 @@ function renderBig3Challenge(gd, root) {
     <div class="timer-bar"><div class="timer-bar-fill" style="width:100%"></div></div>
 
     <div class="game-content">
-      <div class="prompt-card" style="padding:var(--sp-md); border-color: var(--accent-big3); box-shadow: 0 8px 32px rgba(0,242,254,0.15);">
+      <div class="prompt-card" style="padding:var(--sp-md); border-color: var(--accent-big3); box-shadow: 6px 6px 0 var(--accent-big3);">
         <div class="prompt-eyebrow" style="color: var(--accent-big3);">The physical task</div>
         <div class="prompt-text" style="font-size:1.15rem; line-height:1.45; font-weight:700;">${h(gd.currentChallenge)}</div>
       </div>
       
       <div style="margin-top: var(--sp-lg); text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1;">
-        <div class="suspense-pulse-circle" style="animation-name: pulse-ring-big3; background: rgba(0,242,254,0.05); border-color: rgba(0,242,254,0.2); width: 80px; height: 80px;">
+        <div class="suspense-pulse-circle" style="animation-name: pulse-ring-big3; background: rgba(14,165,233,0.06); border-color: rgba(14,165,233,0.25); width: 80px; height: 80px;">
           <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent-big3)" stroke-width="1.5" style="width: 36px; height: 36px;">
             <path d="M20 12V8H4v4M2 20h20M6 20v-8a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v8M14 20v-16a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v16M18 20v-6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v6"/>
           </svg>
         </div>
-        <h3 style="color:#fff; font-size:1.1rem; font-weight:800; margin-top:20px;">Perform this challenge now!</h3>
+        <h3 style="color:var(--text-primary); font-size:1.1rem; font-weight:800; margin-top:20px;">Perform this challenge now!</h3>
         <p class="text-secondary" style="font-size:0.85rem; max-width:260px; margin-top:6px; line-height:1.4;">
           Everyone must attempt the physical task. When the timer runs out, you will vote for who performed the best.
         </p>
@@ -1713,7 +1771,7 @@ function renderBig3Challenge(gd, root) {
     </div>
     ${localPlayer.isHost ? `
       <div class="game-footer">
-        <button id="btn-skip-challenge" class="btn btn-primary btn-full btn-xl" style="background: var(--accent-big3); color: var(--text-inverse); box-shadow: 0 0 20px rgba(0,242,254,0.25);">
+        <button id="btn-skip-challenge" class="btn btn-primary btn-full btn-xl" style="background: var(--accent-big3); color: var(--text-primary); box-shadow: 4px 4px 0 #111;">
           Skip and Vote
         </button>
       </div>
@@ -1755,7 +1813,7 @@ function renderBig3Vote(gd, root) {
         <div class="section-heading" style="margin-top: var(--sp-md);">Who executed it the best?</div>
         <div class="vote-roster-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--sp-sm); margin-top: var(--sp-sm);">
           ${candidates.map(p => `
-            <button class="vote-card btn-vote-player" data-pid="${p.id}" style="display: flex; flex-direction: column; align-items: center; padding: var(--sp-md); background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: var(--r-xl); color: #fff; cursor: pointer; transition: all 0.2s ease;">
+            <button class="vote-card btn-vote-player" data-pid="${p.id}">
               <div class="vote-avatar" style="width: 48px; height: 48px; margin-bottom: 8px;">
                 ${avatarSvg(p.avatarId, p.name)}
               </div>
@@ -1783,19 +1841,19 @@ function renderBig3Suspense(gd, root) {
       <span class="round-badge">Challenge ${gd.round + 1} / ${gd.totalRounds}</span>
     </div>
     <div class="game-content" style="justify-content: center; align-items: center; text-align: center;">
-      <div class="suspense-pulse-circle" style="background: rgba(0,242,254,0.06); border-color: rgba(0,242,254,0.2); animation-name: pulse-ring-big3;">
+      <div class="suspense-pulse-circle" style="background: rgba(14,165,233,0.06); border-color: rgba(14,165,233,0.25); animation-name: pulse-ring-big3;">
         <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent-big3)" stroke-width="1.5" style="width: 44px; height: 44px;">
           <path d="M20 12V8H4v4M2 20h20M6 20v-8a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v8M14 20v-16a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v16M18 20v-6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v6"/>
         </svg>
       </div>
-      <h2 style="font-size: 1.4rem; font-weight: 900; margin-top: 24px; color: #fff;">Votes Are In</h2>
+      <h2 style="font-size: 1.4rem; font-weight: 900; margin-top: 24px; color: var(--text-primary);">Votes Are In</h2>
       <p class="text-secondary" style="max-width: 280px; font-size: 0.88rem; margin-top: 8px;">
         ${localPlayer.isHost ? 'Reveal the podium! Press Reveal to show the top performers.' : 'The host is about to reveal the challenge results...'}
       </p>
     </div>
     ${localPlayer.isHost ? `
       <div class="game-footer">
-        <button id="btn-big3-reveal" class="btn btn-primary btn-full btn-xl" style="background: var(--accent-big3); color: var(--text-inverse); box-shadow: 0 0 20px rgba(0,242,254,0.3);">
+        <button id="btn-big3-reveal" class="btn btn-primary btn-full btn-xl" style="background: var(--accent-big3); color: var(--text-primary); box-shadow: 4px 4px 0 #111;">
           Reveal Results
         </button>
       </div>
@@ -1816,9 +1874,9 @@ function renderBig3Drumroll(gd, root) {
       <div class="drumroll-animation" style="border-bottom-color: var(--accent-big3);">
         <div class="drumroll-stick left"></div>
         <div class="drumroll-stick right"></div>
-        <div class="drumroll-wave" style="background: radial-gradient(ellipse, rgba(0,242,254,0.4), transparent);"></div>
+        <div class="drumroll-wave" style="background: radial-gradient(ellipse, rgba(14,165,233,0.5), transparent);"></div>
       </div>
-      <h2 class="shimmer-text" style="font-size: 1.5rem; font-weight: 900; margin-top: var(--sp-lg); text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent-big3); background-image: linear-gradient(90deg, var(--text-primary), var(--accent-big3), var(--text-primary));">
+      <h2 class="shimmer-text" style="font-size: 1.5rem; font-weight: 900; margin-top: var(--sp-lg); text-transform: uppercase; letter-spacing: 0.05em; background-image: linear-gradient(90deg, var(--text-primary), var(--accent-big3), var(--text-primary));">
         Drumroll Please...
       </h2>
     </div>`;
@@ -1863,13 +1921,13 @@ function renderBig3Reveal(gd, root) {
           </div>
           <span class="predict-pos">Predicted Winner:</span>
           <span class="predict-name">${predictedWinner ? h(predictedWinner.name) : '—'}</span>
-          ${correct ? `<span style="margin-left: auto; font-size: 0.75rem; font-weight: 800; color: var(--accent-big3); background: rgba(0,242,254,0.15); padding: 2px 6px; border-radius: 4px;">+100 pts</span>` : ''}
+          ${correct ? `<span style="margin-left: auto; font-size: 0.75rem; font-weight: 800; color: var(--accent-big3); background: rgba(14,165,233,0.15); padding: 2px 6px; border-radius: 4px;">+100 pts</span>` : ''}
         </div>
       </div>
     </div>
     ${localPlayer.isHost ? `
       <div class="game-footer">
-        <button id="btn-big3-next" class="btn btn-primary btn-full btn-xl" style="background: var(--accent-big3); color: var(--text-inverse); box-shadow: 0 0 20px rgba(0,242,254,0.25);">
+        <button id="btn-big3-next" class="btn btn-primary btn-full btn-xl" style="background: var(--accent-big3); color: var(--text-primary); box-shadow: 4px 4px 0 #111;">
           ${gd.round + 1 >= gd.totalRounds ? 'Final Results' : 'Next Challenge'}
         </button>
       </div>
@@ -1940,6 +1998,7 @@ function startMission() {
     feed: []         // { type, text }
   };
   hostBroadcast();
+  hostSendSecrets();
 }
 
 function assignTeams(mode) {
@@ -2047,7 +2106,7 @@ function renderMission(gd, root) {
 
 function renderMissionBriefing(gd, root) {
   const myTeam = gd.teams[localPlayer.id];
-  const myPersonal = gd.personalMissions[localPlayer.id];
+  const myPersonal = localPlayer.isHost ? (gd.personalMissions && gd.personalMissions[localPlayer.id]) : mySecretMission;
   const teammates = roomState.players.filter(p => p.id !== localPlayer.id && gd.teams[p.id] === myTeam);
 
   root.innerHTML = `
@@ -2111,7 +2170,7 @@ function setupPeekButton(btnId, contentId) {
 
 function renderMissionOps(gd, root) {
   const myTeam     = gd.teams[localPlayer.id];
-  const myPersonal = gd.personalMissions[localPlayer.id];
+  const myPersonal = localPlayer.isHost ? (gd.personalMissions && gd.personalMissions[localPlayer.id]) : mySecretMission;
   const teamMissions  = gd.teamMissions[myTeam] || [];
   const completedTeam = gd.completed['team_' + myTeam] || [];
   const doneSecret    = (gd.completed['secret_' + localPlayer.id] || []).includes(0);
@@ -2200,8 +2259,8 @@ function renderMissionOps(gd, root) {
 
 function renderHostOpsPanel(gd) {
   return `
-    <div class="verify-panel" style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.1); border-radius: var(--r-xl); padding: var(--sp-md); margin-top: var(--sp-md);">
-      <div class="verify-title" style="font-weight: 800; font-size: 1rem; color: var(--accent-mission); margin-bottom: var(--sp-sm); display: flex; align-items: center; gap: 8px;">
+    <div class="verify-panel" style="margin-top: var(--sp-md);">
+      <div class="verify-title">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px">
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
         </svg>
@@ -2213,10 +2272,10 @@ function renderHostOpsPanel(gd) {
           const team = gd.teams[p.id] || 'Solo';
           const secret = gd.personalMissions[p.id] || 'No secret mission';
           return `
-            <div style="display: flex; flex-direction: column; gap: 6px; padding: var(--sp-sm); background: rgba(255,255,255,0.03); border: 1px solid ${isCompromised ? 'var(--danger)' : 'rgba(255,255,255,0.05)'}; border-radius: var(--r-md); transition: all 0.2s ease;">
-              <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <div style="width: 32px; height: 32px; position: relative;">
+            <div class="ops-player-row${isCompromised ? ' is-compromised' : ''}">
+              <div class="ops-player-top">
+                <div class="ops-player-id">
+                  <div style="width: 32px; height: 32px; position: relative; flex-shrink: 0;">
                     ${avatarSvg(p.avatarId, p.name)}
                     ${isCompromised ? `
                       <div style="position: absolute; top: -4px; right: -4px; background: var(--danger); border-radius: 50%; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; border: 1px solid #fff;">
@@ -2224,26 +2283,24 @@ function renderHostOpsPanel(gd) {
                       </div>
                     ` : ''}
                   </div>
-                  <div>
-                    <div style="font-weight: 700; font-size: 0.88rem; color: #fff; display: flex; align-items: center; gap: 6px;">
+                  <div style="min-width:0">
+                    <div class="ops-player-name">
                       ${h(p.name)}
-                      <span style="font-size: 0.7rem; font-weight: 500; opacity: 0.5;">(${h(team)})</span>
+                      <span style="font-size: 0.7rem; font-weight: 500; color: var(--text-muted);">(${h(team)})</span>
                     </div>
-                    <div style="font-size: 0.72rem; color: var(--text-secondary);">Score: ${p.points || 0} pts</div>
+                    <div class="ops-player-score">Score: ${p.points || 0} pts</div>
                   </div>
                 </div>
-                
-                <div style="display: flex; gap: 4px;">
-                  <button class="btn btn-secondary btn-sm btn-host-add" data-pid="${p.id}" style="padding: 4px 8px; font-size: 0.75rem;">+100</button>
-                  <button class="btn btn-secondary btn-sm btn-host-sub" data-pid="${p.id}" style="padding: 4px 8px; font-size: 0.75rem;">-50</button>
-                  <button class="btn btn-sm btn-host-comp" data-pid="${p.id}" style="padding: 4px 8px; font-size: 0.75rem; background: ${isCompromised ? 'rgba(232,65,154,0.2)' : 'var(--danger)'}; border: 1px solid var(--danger); color: #fff;">
-                    ${isCompromised ? 'Restore' : 'Compromise'}
+                <div class="ops-player-btns">
+                  <button class="btn btn-secondary btn-sm btn-host-add" data-pid="${p.id}">+100</button>
+                  <button class="btn btn-secondary btn-sm btn-host-sub" data-pid="${p.id}">-50</button>
+                  <button class="btn btn-sm btn-host-comp" data-pid="${p.id}" style="background: ${isCompromised ? 'var(--bg-base)' : 'var(--danger)'}; color: ${isCompromised ? 'var(--danger)' : '#fff'}; border-color: var(--danger);">
+                    ${isCompromised ? 'Restore' : 'Eliminate'}
                   </button>
                 </div>
               </div>
-              
-              <div style="font-size: 0.75rem; color: var(--text-secondary); background: rgba(0,0,0,0.2); padding: 4px 8px; border-radius: 4px; border-left: 2px solid ${isCompromised ? 'var(--danger)' : 'var(--accent-mission)'}; margin-top: 4px;">
-                <strong style="color: #fff;">Secret Dossier:</strong> "${h(secret)}"
+              <div class="ops-secret-box">
+                <strong style="color: var(--text-primary);">Secret Dossier:</strong> "${h(secret)}"
               </div>
             </div>
           `;
@@ -2255,13 +2312,13 @@ function renderHostOpsPanel(gd) {
 function renderPlayerRosterPanel(gd) {
   return `
     <div class="section-heading" style="margin-top: var(--sp-md);">Operative Status</div>
-    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--sp-sm); margin-top: var(--sp-sm); margin-bottom: var(--sp-md);">
+    <div class="roster-grid" style="margin-top: var(--sp-sm); margin-bottom: var(--sp-md);">
       ${roomState.players.map(p => {
         const isCompromised = gd.compromised && gd.compromised[p.id];
         const team = gd.teams[p.id] || 'Solo';
         return `
-          <div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: rgba(255,255,255,0.02); border: 1px solid ${isCompromised ? 'var(--danger)' : 'rgba(255,255,255,0.05)'}; border-radius: var(--r-md); opacity: ${isCompromised ? '0.6' : '1'};">
-            <div style="width: 28px; height: 28px; position: relative;">
+          <div class="roster-chip${isCompromised ? ' is-compromised' : ''}">
+            <div style="width: 28px; height: 28px; position: relative; flex-shrink: 0;">
               ${avatarSvg(p.avatarId, p.name)}
               ${isCompromised ? `
                 <div style="position: absolute; top: -4px; right: -4px; background: var(--danger); border-radius: 50%; width: 14px; height: 14px; display: flex; align-items: center; justify-content: center; border: 1px solid #fff;">
@@ -2269,9 +2326,9 @@ function renderPlayerRosterPanel(gd) {
                 </div>
               ` : ''}
             </div>
-            <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-              <div style="font-weight: 700; font-size: 0.78rem; color: #fff;">${h(p.name)}</div>
-              <div style="font-size: 0.65rem; color: var(--text-secondary);">${h(team)} ${isCompromised ? '— ELIMINATED' : '— ACTIVE'}</div>
+            <div style="overflow: hidden; min-width: 0;">
+              <div class="roster-chip-name">${h(p.name)}</div>
+              <div class="roster-chip-team">${h(team)} ${isCompromised ? '— OUT' : '— ACTIVE'}</div>
             </div>
           </div>
         `;
@@ -2350,7 +2407,7 @@ function renderMissionSummary() {
     <div class="section-heading" style="margin-top:var(--sp-md)">Mission Reveal</div>
     <div class="mission-cards">
       ${roomState.players.filter(p => gd.personalMissions[p.id]).map(p => {
-        const exposed = gd.exposed.includes(p.id);
+        const exposed = !!(gd.compromised && gd.compromised[p.id]);
         const done = (gd.completed['secret_' + p.id] || []).includes(0);
         return `<div class="mission-item${done ? ' done' : ''}${exposed ? ' exposed' : ''}">
           <div class="mission-tags-row">
@@ -2407,7 +2464,7 @@ function renderEditorList() {
 // TOASTS
 // ═══════════════════════════════════════════════════════════
 function showToast(msg, type = 'info') {
-  const container = document.getElementById('toasts');
+  const container = document.getElementById('toast-container');
   if (!container) return;
   const el = document.createElement('div');
   el.className = 'toast ' + type;
@@ -2499,7 +2556,7 @@ document.addEventListener('DOMContentLoaded', () => {
       hostBroadcast();
     } else {
       if (!bc) { showToast('Connection error. Go back and try again.', 'error'); return; }
-      bc.postMessage({
+      bcSend({
         type: MSG.JOIN_REQ,
         player: { id: localPlayer.id, name: localPlayer.name, avatarId: localPlayer.avatarId, isHost: false, isBot: false, points: 0 }
       });
@@ -2543,7 +2600,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const modal = document.getElementById('settings-modal');
     if (modal) {
       modal.dataset.gameId = gameId;
-      modal.classList.remove('hidden');
+      modal.classList.add('active');
     }
     
     // Update modal header info
@@ -2554,18 +2611,11 @@ document.addEventListener('DOMContentLoaded', () => {
       mission: { title: 'Mission Improbable', sub: 'Secret physical tasks & verbal callouts' }
     };
     
-    const titleEl = document.getElementById('modal-game-title');
-    const subEl = document.getElementById('modal-game-title')?.nextElementSibling;
-    const iconWrap = document.getElementById('modal-game-icon');
+    const titleEl = document.getElementById('modal-title');
+    const subEl = document.getElementById('modal-eyebrow');
     
     if (titleEl) titleEl.textContent = GAME_DETAILS[gameId].title;
     if (subEl) subEl.textContent = GAME_DETAILS[gameId].sub;
-    
-    // Copy SVG from card to modal icon wrap
-    const cardIcon = document.querySelector(`.game-card[data-game="${gameId}"] .game-card-icon`);
-    if (iconWrap && cardIcon) {
-      iconWrap.innerHTML = cardIcon.innerHTML;
-    }
     
     syncSettingsPanelVisibility();
     syncSettingsValues();
@@ -2574,7 +2624,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function closeSettingsModal() {
     sfx.play('click');
-    document.getElementById('settings-modal')?.classList.add('hidden');
+    document.getElementById('settings-modal')?.classList.remove('active');
   }
 
   document.querySelectorAll('.game-card').forEach(btn => {
@@ -2583,8 +2633,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  document.getElementById('settings-modal-close')?.addEventListener('click', closeSettingsModal);
-  document.getElementById('settings-modal-backdrop')?.addEventListener('click', closeSettingsModal);
+  document.getElementById('btn-close-settings')?.addEventListener('click', closeSettingsModal);
+  document.getElementById('settings-modal')?.addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeSettingsModal();
+  });
 
   // ── Lobby — bots & start ──
   document.getElementById('btn-add-bots')?.addEventListener('click', () => {
@@ -2596,13 +2648,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!localPlayer.isHost) return;
     if (roomState.players.length < 2) { showToast('Need at least 2 players. Add bots to test.', 'error'); return; }
     collectSettings();
-    document.getElementById('settings-modal')?.classList.add('hidden');
+    document.getElementById('settings-modal')?.classList.remove('active');
     roomState.players.forEach(p => { p.points = 0; });
     roomState.view     = 'game';
     roomState.gameData = null;
 
     // Broadcast the view transition first so players see "game" view
-    if (bc) bc.postMessage({ type: MSG.STATE_SYNC, state: roomState });
+    if (bc) bcSend({ type: MSG.STATE_SYNC, state: roomState });
     showView('v-game', true);
 
     // Small delay so DOM is ready before game init writes to it

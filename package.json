@@ -4,11 +4,12 @@
   "description": "Premium Party Game Platform with four mini-games",
   "main": "index.html",
   "scripts": {
-    "dev": "http-server -p 3000 -c-1",
-    "start": "http-server -p 3000 -c-1"
+    "dev": "node server.js",
+    "start": "node server.js"
   },
   "dependencies": {
-    "http-server": "^14.1.1"
+    "http-server": "^14.1.1",
+    "ws": "^8.18.0"
   },
   "keywords": [
     "party-game",

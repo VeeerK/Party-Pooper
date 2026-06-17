@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Party Pooper</title>
   <meta name="description" content="The premium party game platform for four fast social mini-games.">
-  <link rel="stylesheet" href="src/style.css">
+  <link rel="stylesheet" href="src/style.css?v=4">
   <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
 </head>
 <body>
@@ -94,7 +94,7 @@
       </div>
 
       <!-- Host Controls -->
-      <div id="host-controls" class="d-none" style="display:flex; flex-direction:column; flex:1;">
+      <div id="host-controls" class="hidden" style="display:flex; flex-direction:column; flex:1;">
         <div style="padding:20px 20px 0;">
           <h2 class="font-display">Select Game</h2>
         </div>
@@ -118,12 +118,12 @@
         </div>
         
         <div style="padding:20px;">
-           <button class="btn btn-primary btn-full" onclick="addBots(3)" style="background:var(--bg-surface); color:var(--text-primary);">+ Add Bots (Dev)</button>
+           <button id="btn-add-bots" class="btn btn-primary btn-full" style="background:var(--bg-surface); color:var(--text-primary);">+ Add Bots (Dev)</button>
         </div>
       </div>
 
       <!-- Player Wait State -->
-      <div id="player-wait" class="flex-1 d-none" style="display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding:var(--sp-lg);">
+      <div id="player-wait" class="flex-1 hidden" style="display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding:var(--sp-lg);">
         <div style="width:80px; height:80px; border-radius:50%; border:4px solid var(--border); background:var(--brand); display:flex; align-items:center; justify-content:center; box-shadow:4px 4px 0 #111; animation: bounce 1s infinite alternate ease-in-out; margin-bottom:24px;">
            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" style="width:36px; height:36px;"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
         </div>
@@ -172,12 +172,13 @@
         <button class="etab" data-etab="big3" style="flex:1; padding:12px; font-weight:700; background:none; border:none; border-right:3px solid var(--border); cursor:pointer;">Big 3</button>
         <button class="etab" data-etab="mission" style="flex:1; padding:12px; font-weight:700; background:none; border:none; cursor:pointer;">Mission</button>
       </div>
-      <div style="padding:20px; flex:1; overflow-y:auto;">
+      <div style="padding:20px; flex:1; overflow-y:auto; display:flex; flex-direction:column;">
         <div style="display:flex; gap:12px; margin-bottom:20px;">
           <input id="inp-new-content" class="inp" type="text" placeholder="Add new prompt..." style="flex:1;">
           <button id="btn-add-content" class="btn btn-primary" style="width:60px;">Add</button>
         </div>
-        <div id="editor-list" style="display:flex; flex-direction:column; gap:12px;"></div>
+        <div id="editor-list" style="display:flex; flex-direction:column; gap:12px; flex:1;"></div>
+        <button id="btn-reset-content" class="btn" style="background:transparent; box-shadow:none; border:none; text-decoration:underline; margin-top:16px; align-self:center;">Reset to defaults</button>
       </div>
     </div>
 
@@ -198,7 +199,7 @@
         
         <div class="modal-body">
           <!-- Game 1: You Seem The Type -->
-          <div id="settings-yseem" class="settings-group d-none">
+          <div id="settings-yseem" class="settings-group hidden">
             <div class="form-group">
               <label class="form-label">Number of Rounds</label>
               <input id="yseem-rounds" class="inp" type="number" min="1" max="20" value="5">
@@ -207,10 +208,17 @@
               <label class="form-label">Vote Time (seconds)</label>
               <input id="yseem-time" class="inp" type="number" min="10" max="120" value="30">
             </div>
+            <div class="form-group">
+              <label class="form-label">Reveal</label>
+              <select id="yseem-reveal" class="inp">
+                <option value="each">Each round</option>
+                <option value="end">At the end</option>
+              </select>
+            </div>
           </div>
 
           <!-- Game 2: Excuse Me -->
-          <div id="settings-excuse" class="settings-group d-none">
+          <div id="settings-excuse" class="settings-group hidden">
             <div class="form-group">
               <label class="form-label">Number of Rounds</label>
               <input id="excuse-rounds" class="inp" type="number" min="1" max="10" value="3">
@@ -223,10 +231,14 @@
               <span class="check-label">Anonymous Submissions</span>
               <label class="switch"><input id="excuse-anon" type="checkbox" checked><span class="slider"></span></label>
             </div>
+            <div class="check-row">
+              <span class="check-label">Bonus Rounds</span>
+              <label class="switch"><input id="excuse-bonus" type="checkbox" checked><span class="slider"></span></label>
+            </div>
           </div>
 
           <!-- Game 3: The Big 3 -->
-          <div id="settings-big3" class="settings-group d-none">
+          <div id="settings-big3" class="settings-group hidden">
             <div class="form-group">
               <label class="form-label">Number of Rounds</label>
               <input id="big3-rounds" class="inp" type="number" min="1" max="10" value="3">
@@ -242,13 +254,21 @@
           </div>
 
           <!-- Game 4: Mission Improbable -->
-          <div id="settings-mission" class="settings-group d-none">
+          <div id="settings-mission" class="settings-group hidden">
             <div class="form-group">
               <label class="form-label">Team Mode</label>
               <select id="mission-mode" class="inp">
                 <option value="solo">Solo (Free for all)</option>
                 <option value="team">Team vs Team</option>
               </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Missions per team</label>
+              <input id="mission-team-count" class="inp" type="number" min="3" max="10" value="3">
+            </div>
+            <div class="check-row">
+              <span class="check-label">Individual secret missions</span>
+              <label class="switch"><input id="mission-personal" type="checkbox" checked><span class="slider"></span></label>
             </div>
             <div class="check-row">
               <span class="check-label">Deduct on False Accusation</span>
@@ -266,7 +286,7 @@
     <!-- ═══════════════════════════════════════════════
          TOAST SYSTEM
     ═══════════════════════════════════════════════ -->
-    <div id="toast-container" style="position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:9999; display:flex; flex-direction:column; gap:8px; pointer-events:none;"></div>
+    <div id="toast-container" style="position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:9999; display:flex; flex-direction:column; gap:8px; pointer-events:none; width:min(100%, 380px);"></div>
 
   </div>
 
