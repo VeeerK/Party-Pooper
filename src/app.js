@@ -16,6 +16,11 @@ const DEFAULT_CONTENT = {
     "Who seems the type to know one obscure fact about everything?",
     "Who seems the type to accidentally become locally famous?",
     "Who seems the type to own something random but expensive?",
+    "[ACTION] Who seems the type to perform the best fake proposal?",
+    "[ACTION] Who seems the type to give the most dramatic apology?",
+    "[ACTION] Who seems the type to sell ice to an Eskimo?",
+    "[ACTION] Who seems the type to give the best motivational speech?",
+    "[ACTION] Who seems the type to act out a dramatic death scene?",
     "Who seems the type to start a story they didn't intend to tell?",
     "Who seems the type to have a very locked notes app?",
     "Who seems the type to survive a chaotic night without saying much?",
@@ -972,7 +977,21 @@ function runBotAction(stage, ctx = {}) {
 function startYouseem() {
   clearTimer();
   const opts = roomState.settings.yseem;
-  const questions = pick(getContent('yseem'), opts.rounds);
+  const allYseem = getContent('yseem');
+  const actionables = shuffle(allYseem.filter(q => q.startsWith('[ACTION]')));
+  const normals = shuffle(allYseem.filter(q => !q.startsWith('[ACTION]')));
+  const questions = [];
+  let aIdx = 0, nIdx = 0;
+  for (let i = 0; i < opts.rounds; i++) {
+    let isBonus = Math.random() < 0.33 && aIdx < actionables.length;
+    if (isBonus) {
+      questions.push({ text: actionables[aIdx++].replace('[ACTION] ', '').trim(), isBonus: true });
+    } else {
+      let q = normals.length > 0 ? normals[nIdx % normals.length] : actionables[aIdx % actionables.length];
+      questions.push({ text: q.replace('[ACTION] ', '').trim(), isBonus: false });
+      nIdx++;
+    }
+  }
   roomState.gameData = {
     game: 'yseem', round: 0, totalRounds: questions.length,
     questions, currentQ: questions[0],
@@ -1083,7 +1102,7 @@ function renderYouseemVote(gd, root) {
     <div class="game-content">
       <div class="prompt-card">
         <div class="prompt-eyebrow">Who seems the type to...</div>
-        <div class="prompt-text">${h(gd.currentQ)}</div>
+        <div class="prompt-text">${h(gd.currentQ.text)}</div>
       </div>
 
       ${myVote ? `
@@ -1140,6 +1159,12 @@ function renderYouseemSuspense(gd, root) {
       <p class="text-secondary" style="max-width: 280px; font-size: 0.88rem; margin-top: 8px;">
         ${localPlayer.isHost ? 'Prepare the crew. Press Reveal to show the vibe!' : 'Prepare yourself. The host is about to reveal the vibe...'}
       </p>
+      ${localPlayer.isHost && gd.currentQ.isBonus ? `
+        <div style="margin-top: 16px; display: inline-block; padding: 6px 12px; background: rgba(255,95,64,0.15); color: var(--accent-yseem); font-weight: 800; border-radius: var(--r-md); border: 1px solid var(--accent-yseem); font-size: 0.8rem;">
+          <svg viewBox="0 0 20 20" fill="currentColor" style="width: 14px; height: 14px; display: inline-block; vertical-align: middle; margin-top: -2px; margin-right: 4px;"><path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd" /></svg>
+          BONUS ROUND
+        </div>
+      ` : ''}
     </div>
     ${localPlayer.isHost ? `
       <div class="game-footer">
@@ -1186,7 +1211,7 @@ function renderYouseemReveal(gd, root) {
     <div class="game-content">
       <div class="prompt-card" style="padding:var(--sp-md) var(--sp-lg)">
         <div class="prompt-eyebrow">Who seems the type to...</div>
-        <div class="prompt-text" style="font-size:1rem">${h(gd.currentQ)}</div>
+        <div class="prompt-text" style="font-size:1rem">${h(gd.currentQ.text)}</div>
       </div>
 
       ${winnerNames.length > 0 ? `
@@ -1199,7 +1224,7 @@ function renderYouseemReveal(gd, root) {
             fits this profile perfectly!
           </p>
           <div class="consequence-badge" style="display: inline-block; margin-top: 14px; padding: 6px 16px; background: var(--accent-yseem); color: #fff; font-weight: 800; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.05em; border-radius: var(--r-pill); border: 2px solid var(--border); box-shadow: 3px 3px 0 #111;">
-            Consequence: Take a shot or face a challenge!
+            ${gd.currentQ.isBonus ? 'Bonus Round: Perform the action implied by the question right now!' : 'Consequence: Take a shot or face a challenge!'}
           </div>
         </div>
       ` : ''}
@@ -1620,18 +1645,19 @@ function renderExcuseReveal(gd, root) {
 // GAME 3: THE BIG 3
 // ═══════════════════════════════════════════════════════════
 function startBig3() {
-  clearTimer(); clearStopwatch();
+  clearTimer();
   const opts = roomState.settings.big3;
   const challenges = pick(getContent('big3'), opts.rounds);
   roomState.gameData = {
     game: 'big3', round: 0, totalRounds: challenges.length,
     challenges, currentChallenge: challenges[0],
-    stage: 'challenge',   // 'challenge' | 'vote' | 'suspense' | 'drumroll' | 'reveal'
+    stage: 'predict',   // 'predict' | 'perform' | 'judge' | 'suspense' | 'drumroll' | 'reveal'
     predictions: {},      // { playerId: targetPlayerId } (single vote)
-    finalRanking: [],     // [1st, 2nd, 3rd] ids
-    timerTotal: opts.time || 30
+    competitors: [],      // [id1, id2, id3]
+    winnerId: null,
+    timerTotal: 30
   };
-  startTimer(opts.time || 30, () => launchBig3Voting());
+  startTimer(30, () => launchBig3Perform());
   hostBroadcast();
 }
 
@@ -1639,19 +1665,25 @@ function handleBig3Action(playerId, action, data) {
   const gd = roomState.gameData;
   if (!gd) return;
 
-  if (action === 'submit_prediction' && gd.stage === 'vote') {
+  if (action === 'submit_prediction' && gd.stage === 'predict') {
     if (gd.predictions[playerId]) return;
     gd.predictions[playerId] = data.targetId;
     if (Object.keys(gd.predictions).length >= roomState.players.length) {
-      finalizeBig3();
+      launchBig3Perform();
     } else {
       hostBroadcast();
     }
     return;
   }
 
-  if (action === 'skip_challenge' && localPlayer.isHost && gd.stage === 'challenge') {
-    launchBig3Voting();
+  if (action === 'skip_challenge' && localPlayer.isHost && gd.stage === 'perform') {
+    launchBig3Judge();
+    return;
+  }
+
+  if (action === 'judge_winner' && localPlayer.isHost && gd.stage === 'judge') {
+    gd.winnerId = data.targetId;
+    finalizeBig3();
     return;
   }
 
@@ -1669,13 +1701,31 @@ function handleBig3Action(playerId, action, data) {
   }
 }
 
-function launchBig3Voting() {
+function launchBig3Perform() {
   clearTimer();
   const gd = roomState.gameData;
-  if (!gd || gd.stage !== 'challenge') return;
-  gd.stage = 'vote';
-  runBotAction('big3_vote');
-  startTimer(30, () => finalizeBig3());
+  if (!gd || gd.stage !== 'predict') return;
+  
+  const tally = {};
+  roomState.players.forEach(p => { tally[p.id] = 0; });
+  Object.values(gd.predictions).forEach(tid => {
+    if (tally[tid] !== undefined) tally[tid]++;
+  });
+  const sortedIds = Object.keys(tally).sort((a, b) => tally[b] - tally[a]);
+  gd.competitors = sortedIds.slice(0, 3);
+
+  gd.stage = 'perform';
+  const opts = roomState.settings.big3;
+  gd.timerTotal = opts.time || 30;
+  startTimer(gd.timerTotal, () => launchBig3Judge());
+  hostBroadcast();
+}
+
+function launchBig3Judge() {
+  clearTimer();
+  const gd = roomState.gameData;
+  if (!gd || gd.stage !== 'perform') return;
+  gd.stage = 'judge';
   hostBroadcast();
 }
 
@@ -1684,35 +1734,14 @@ function finalizeBig3() {
   const gd = roomState.gameData;
   if (!gd || gd.stage === 'suspense' || gd.stage === 'reveal') return;
 
-  // Tally votes
-  const tally = {};
-  roomState.players.forEach(p => { tally[p.id] = 0; });
-  Object.values(gd.predictions).forEach(tid => {
-    if (tally[tid] !== undefined) tally[tid]++;
+  roomState.players.forEach(p => {
+    if (gd.predictions[p.id] === gd.winnerId) {
+      p.points = (p.points || 0) + 150;
+    }
   });
-
-  // Sort by vote count descending
-  const sortedIds = Object.keys(tally).sort((a, b) => tally[b] - tally[a]);
   
-  // Save rankings
-  gd.finalRanking = sortedIds.slice(0, 3);
-  
-  // Award points to performers based on vote ranking
-  const awards = [150, 100, 50];
-  gd.finalRanking.forEach((pid, idx) => {
-    const p = roomState.players.find(pl => pl.id === pid);
-    if (p) p.points = (p.points || 0) + awards[idx];
-  });
-
-  // Award bonus points to players who correctly predicted the 1st place winner
-  const winnerId = gd.finalRanking[0];
-  if (winnerId) {
-    roomState.players.forEach(p => {
-      if (gd.predictions[p.id] === winnerId) {
-        p.points = (p.points || 0) + 100; // Prediction bonus
-      }
-    });
-  }
+  const winner = roomState.players.find(p => p.id === gd.winnerId);
+  if (winner) winner.points = (winner.points || 0) + 100;
 
   gd.stage = 'suspense';
   sfx.play('suspense');
@@ -1724,22 +1753,78 @@ function advanceBig3() {
   gd.round++;
   if (gd.round >= gd.totalRounds) { finishGame(); return; }
   gd.currentChallenge = gd.challenges[gd.round];
-  gd.stage = 'challenge';
-  gd.predictions = {}; gd.finalRanking = [];
-  startTimer(roomState.settings.big3.time || 30, () => launchBig3Voting());
+  gd.stage = 'predict';
+  gd.predictions = {}; gd.competitors = []; gd.winnerId = null;
+  gd.timerTotal = 30;
+  startTimer(30, () => launchBig3Perform());
   hostBroadcast();
 }
 
 function renderBig3(gd, root) {
-  if (gd.stage === 'challenge') renderBig3Challenge(gd, root);
-  else if (gd.stage === 'vote') renderBig3Vote(gd, root);
+  if (gd.stage === 'predict') renderBig3Predict(gd, root);
+  else if (gd.stage === 'perform') renderBig3Challenge(gd, root);
+  else if (gd.stage === 'judge') renderBig3Judge(gd, root);
   else if (gd.stage === 'suspense') renderBig3Suspense(gd, root);
   else if (gd.stage === 'drumroll') renderBig3Drumroll(gd, root);
   else renderBig3Reveal(gd, root);
 }
 
+function renderBig3Predict(gd, root) {
+  root.dataset.big3Stage = 'predict';
+  const myVote = gd.predictions[localPlayer.id];
+  const candidates = roomState.players.filter(p => p.id !== localPlayer.id);
+
+  root.innerHTML = `
+    <div class="game-hdr" data-game="big3">
+      <span class="game-hdr-title">Prediction Phase</span>
+      <div class="game-hdr-meta">
+        <span class="round-badge">Challenge ${gd.round + 1} / ${gd.totalRounds}</span>
+        <span class="timer-badge">30s</span>
+      </div>
+    </div>
+    <div class="timer-bar"><div class="timer-bar-fill" style="width:100%"></div></div>
+
+    <div class="game-content">
+      <div class="prompt-card" style="padding:var(--sp-sm); text-align:center; border-color: var(--accent-big3);">
+        <div class="prompt-eyebrow" style="color: var(--accent-big3);">The challenge is:</div>
+        <div style="font-size:0.95rem; font-weight:600; opacity:0.85;">"${h(gd.currentChallenge)}"</div>
+      </div>
+      
+      ${myVote ? `
+        <div class="submitted-state">
+          <div class="check-circle" style="border-color: var(--accent-big3); color: var(--accent-big3);">
+            <svg viewBox="0 0 20 20" fill="none"><path d="M5 10l4 4 6-7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <div class="submitted-title">Prediction Locked</div>
+          <div class="submitted-sub">Waiting for others to predict...</div>
+        </div>
+      ` : `
+        <div class="section-heading" style="margin-top: var(--sp-md);">Who will win?</div>
+        <div class="vote-roster-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--sp-sm); margin-top: var(--sp-sm);">
+          ${candidates.map(p => `
+            <button class="vote-card btn-vote-player" data-pid="${p.id}">
+              <div class="vote-avatar" style="width: 48px; height: 48px; margin-bottom: 8px;">
+                ${avatarSvg(p.avatarId, p.name)}
+              </div>
+              <span style="font-weight: 700; font-size: 0.9rem;">${h(p.name)}</span>
+            </button>
+          `).join('')}
+        </div>
+      `}
+    </div>`;
+
+  if (!myVote) {
+    root.querySelectorAll('.btn-vote-player').forEach(btn => {
+      btn.addEventListener('click', () => {
+        playerSend('submit_prediction', { targetId: btn.dataset.pid });
+      });
+    });
+  }
+}
+
 function renderBig3Challenge(gd, root) {
   const total = gd.timerTotal || roomState.settings.big3.time || 30;
+  const isCompetitor = gd.competitors.includes(localPlayer.id);
 
   root.innerHTML = `
     <div class="game-hdr" data-game="big3">
@@ -1757,22 +1842,40 @@ function renderBig3Challenge(gd, root) {
         <div class="prompt-text" style="font-size:1.15rem; line-height:1.45; font-weight:700;">${h(gd.currentChallenge)}</div>
       </div>
       
+      <div class="section-heading" style="margin-top: var(--sp-md);">Top Predicted Competitors</div>
+      <div class="vote-roster-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-sm); margin-top: var(--sp-sm);">
+        ${gd.competitors.map(pid => {
+          const p = roomState.players.find(pl => pl.id === pid);
+          if(!p) return '';
+          return `
+            <div class="vote-card" style="background: var(--bg-panel); border-color: var(--border); pointer-events: none;">
+              <div class="vote-avatar" style="width: 40px; height: 40px; margin-bottom: 6px;">
+                ${avatarSvg(p.avatarId, p.name)}
+              </div>
+              <span style="font-weight: 700; font-size: 0.8rem;">${h(p.name)}</span>
+            </div>
+          `;
+        }).join('')}
+      </div>
+
       <div style="margin-top: var(--sp-lg); text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1;">
         <div class="suspense-pulse-circle" style="animation-name: pulse-ring-big3; background: rgba(14,165,233,0.06); border-color: rgba(14,165,233,0.25); width: 80px; height: 80px;">
           <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent-big3)" stroke-width="1.5" style="width: 36px; height: 36px;">
             <path d="M20 12V8H4v4M2 20h20M6 20v-8a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v8M14 20v-16a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v16M18 20v-6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v6"/>
           </svg>
         </div>
-        <h3 style="color:var(--text-primary); font-size:1.1rem; font-weight:800; margin-top:20px;">Perform this challenge now!</h3>
+        <h3 style="color:var(--text-primary); font-size:1.1rem; font-weight:800; margin-top:20px;">
+          ${isCompetitor ? 'You are performing!' : 'Watch the competitors!'}
+        </h3>
         <p class="text-secondary" style="font-size:0.85rem; max-width:260px; margin-top:6px; line-height:1.4;">
-          Everyone must attempt the physical task. When the timer runs out, you will vote for who performed the best.
+          ${isCompetitor ? 'Do your best. The host will declare the winner.' : 'Cheer them on. The host will declare the winner.'}
         </p>
       </div>
     </div>
     ${localPlayer.isHost ? `
       <div class="game-footer">
         <button id="btn-skip-challenge" class="btn btn-primary btn-full btn-xl" style="background: var(--accent-big3); color: var(--text-primary); box-shadow: 4px 4px 0 #111;">
-          Skip and Vote
+          Skip to Judging
         </button>
       </div>
     ` : `<div class="game-footer"><div class="wait-inline">Performing challenge...</div></div>`}`;
@@ -1780,55 +1883,54 @@ function renderBig3Challenge(gd, root) {
   document.getElementById('btn-skip-challenge')?.addEventListener('click', () => playerSend('skip_challenge', {}));
 }
 
-function renderBig3Vote(gd, root) {
-  root.dataset.big3Stage = 'vote';
-  const myVote = gd.predictions[localPlayer.id];
-  const candidates = roomState.players.filter(p => p.id !== localPlayer.id);
+function renderBig3Judge(gd, root) {
+  root.dataset.big3Stage = 'judge';
 
   root.innerHTML = `
     <div class="game-hdr" data-game="big3">
-      <span class="game-hdr-title">Vote for Winner</span>
-      <div class="game-hdr-meta">
-        <span class="round-badge">Challenge ${gd.round + 1} / ${gd.totalRounds}</span>
-        <span class="timer-badge">30s</span>
-      </div>
+      <span class="game-hdr-title">Judging Phase</span>
+      <span class="round-badge">Challenge ${gd.round + 1} / ${gd.totalRounds}</span>
     </div>
-    <div class="timer-bar"><div class="timer-bar-fill" style="width:100%"></div></div>
 
     <div class="game-content">
       <div class="prompt-card" style="padding:var(--sp-sm); text-align:center; border-color: var(--accent-big3);">
         <div class="prompt-eyebrow" style="color: var(--accent-big3);">The challenge was:</div>
         <div style="font-size:0.95rem; font-weight:600; opacity:0.85;">"${h(gd.currentChallenge)}"</div>
       </div>
-      
-      ${myVote ? `
-        <div class="submitted-state">
-          <div class="check-circle" style="border-color: var(--accent-big3); color: var(--accent-big3);">
-            <svg viewBox="0 0 20 20" fill="none"><path d="M5 10l4 4 6-7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </div>
-          <div class="submitted-title">Vote Registered</div>
-          <div class="submitted-sub">Waiting for others to decide...</div>
+
+      ${localPlayer.isHost ? `
+        <div class="section-heading" style="margin-top: var(--sp-md);">Who won? (Host Only)</div>
+        <div class="vote-roster-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-sm); margin-top: var(--sp-sm);">
+          ${gd.competitors.map(pid => {
+            const p = roomState.players.find(pl => pl.id === pid);
+            if(!p) return '';
+            return `
+              <button class="vote-card btn-judge-player" data-pid="${p.id}">
+                <div class="vote-avatar" style="width: 48px; height: 48px; margin-bottom: 8px;">
+                  ${avatarSvg(p.avatarId, p.name)}
+                </div>
+                <span style="font-weight: 700; font-size: 0.9rem;">${h(p.name)}</span>
+              </button>
+            `;
+          }).join('')}
         </div>
       ` : `
-        <div class="section-heading" style="margin-top: var(--sp-md);">Who executed it the best?</div>
-        <div class="vote-roster-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--sp-sm); margin-top: var(--sp-sm);">
-          ${candidates.map(p => `
-            <button class="vote-card btn-vote-player" data-pid="${p.id}">
-              <div class="vote-avatar" style="width: 48px; height: 48px; margin-bottom: 8px;">
-                ${avatarSvg(p.avatarId, p.name)}
-              </div>
-              <span style="font-weight: 700; font-size: 0.9rem;">${h(p.name)}</span>
-            </button>
-          `).join('')}
+        <div class="submitted-state" style="margin-top: var(--sp-xl);">
+          <div class="suspense-pulse-circle" style="animation-name: pulse-ring-big3; background: rgba(14,165,233,0.06); border-color: rgba(14,165,233,0.25);">
+             <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent-big3)" stroke-width="1.5" style="width: 36px; height: 36px;">
+               <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+             </svg>
+          </div>
+          <div class="submitted-title" style="margin-top: 20px;">Judging...</div>
+          <div class="submitted-sub">The host is declaring the winner.</div>
         </div>
       `}
     </div>`;
 
-  if (!myVote) {
-    root.querySelectorAll('.btn-vote-player').forEach(btn => {
+  if (localPlayer.isHost) {
+    root.querySelectorAll('.btn-judge-player').forEach(btn => {
       btn.addEventListener('click', () => {
-        const targetId = btn.dataset.pid;
-        playerSend('submit_prediction', { targetId });
+        playerSend('judge_winner', { targetId: btn.dataset.pid });
       });
     });
   }
@@ -1846,9 +1948,9 @@ function renderBig3Suspense(gd, root) {
           <path d="M20 12V8H4v4M2 20h20M6 20v-8a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v8M14 20v-16a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v16M18 20v-6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v6"/>
         </svg>
       </div>
-      <h2 style="font-size: 1.4rem; font-weight: 900; margin-top: 24px; color: var(--text-primary);">Votes Are In</h2>
+      <h2 style="font-size: 1.4rem; font-weight: 900; margin-top: 24px; color: var(--text-primary);">Verdict Reached</h2>
       <p class="text-secondary" style="max-width: 280px; font-size: 0.88rem; margin-top: 8px;">
-        ${localPlayer.isHost ? 'Reveal the podium! Press Reveal to show the top performers.' : 'The host is about to reveal the challenge results...'}
+        ${localPlayer.isHost ? 'Reveal the winner! Press Reveal to show the results.' : 'The host is about to reveal the challenge winner...'}
       </p>
     </div>
     ${localPlayer.isHost ? `
@@ -1886,8 +1988,8 @@ function renderBig3Reveal(gd, root) {
   root.dataset.big3Stage = 'reveal';
   const myGuess = gd.predictions[localPlayer.id];
   const predictedWinner = roomState.players.find(p => p.id === myGuess);
-  const correct = gd.finalRanking[0] === myGuess;
-  const pts = [150, 100, 50];
+  const correct = gd.winnerId === myGuess;
+  const actualWinner = roomState.players.find(p => p.id === gd.winnerId);
 
   root.innerHTML = `
     <div class="game-hdr" data-game="big3">
@@ -1895,35 +1997,36 @@ function renderBig3Reveal(gd, root) {
       <span class="round-badge">${gd.round + 1} / ${gd.totalRounds}</span>
     </div>
     <div class="game-content">
-      <div class="section-heading">Final Ranking</div>
-      <div class="leaderboard">
-        ${gd.finalRanking.map((pid, i) => {
-          const p = roomState.players.find(pl => pl.id === pid);
-          if (!p) return '';
-          return `<div class="lb-item rank-${i+1}">
-            <div class="lb-rank">${i+1}</div>
-            <div class="lb-avatar">${avatarSvg(p.avatarId, p.name)}</div>
-            <div class="lb-info">
-              <div class="lb-name">${h(p.name)}</div>
-              <div class="lb-award">${['Gold','Silver','Bronze'][i]} +${pts[i]} pts</div>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>
+      ${actualWinner ? `
+        <div class="winner-card animate-pop" style="margin-bottom: var(--sp-md); border-color: var(--accent-big3);">
+          <div class="prompt-eyebrow" style="color: var(--accent-big3);">Challenge Winner</div>
+          <div class="winner-text" style="font-size: 1.4rem; line-height: 1.35; margin: var(--sp-xs) 0; font-weight: 900;">${h(actualWinner.name)}</div>
+        </div>
+      ` : ''}
 
       <div class="section-heading">Your Prediction</div>
-      <div class="predict-check-list">
+      <div class="predict-check-list" style="margin-bottom: var(--sp-md);">
         <div class="predict-check-row ${correct ? 'correct' : 'wrong'}">
           <div class="predict-check-icon">
             ${correct
               ? '<svg viewBox="0 0 20 20" fill="none"><path d="M4 10l4 4 8-8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
               : '<svg viewBox="0 0 20 20" fill="none"><path d="M6 6l8 8M14 6l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'}
           </div>
-          <span class="predict-pos">Predicted Winner:</span>
+          <span class="predict-pos">You Guessed:</span>
           <span class="predict-name">${predictedWinner ? h(predictedWinner.name) : '—'}</span>
-          ${correct ? `<span style="margin-left: auto; font-size: 0.75rem; font-weight: 800; color: var(--accent-big3); background: rgba(14,165,233,0.15); padding: 2px 6px; border-radius: 4px;">+100 pts</span>` : ''}
+          ${correct ? '<span style="margin-left: auto; font-size: 0.75rem; font-weight: 800; color: var(--accent-big3); background: rgba(14,165,233,0.15); padding: 2px 6px; border-radius: 4px;">Safe! +150 pts</span>' : ''}
         </div>
       </div>
+      
+      ${!correct ? `
+        <div class="loser-card animate-pop" style="margin-bottom: var(--sp-lg); border-color: var(--danger);">
+          <div class="prompt-eyebrow" style="color: var(--danger);">Prediction Failed</div>
+          <div class="winner-text" style="font-size: 1.05rem; line-height: 1.35; margin: var(--sp-xs) 0; opacity: 0.85;">You did not predict the winner.</div>
+          <div style="display: inline-block; padding: 4px 12px; background: var(--danger); color: #fff; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; border-radius: var(--r-pill); border: 2px solid var(--border); box-shadow: 2px 2px 0 #111; margin-top: 8px;">
+            Consequence: Take a shot or face a dare!
+          </div>
+        </div>
+      ` : ''}
     </div>
     ${localPlayer.isHost ? `
       <div class="game-footer">
@@ -1931,7 +2034,7 @@ function renderBig3Reveal(gd, root) {
           ${gd.round + 1 >= gd.totalRounds ? 'Final Results' : 'Next Challenge'}
         </button>
       </div>
-    ` : `<div class="game-footer"><div class="wait-inline">Waiting for host...</div></div>`}`;
+    ` : '<div class="game-footer"><div class="wait-inline">Waiting for host...</div></div>'}`;
 
   document.getElementById('btn-big3-next')?.addEventListener('click', () => {
     confetti.stop();
