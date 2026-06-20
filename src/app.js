@@ -526,13 +526,9 @@ function openChannel(pin) {
     handleBCMessage({ data: msg });
   });
 
-  bc.on('presence', { event: 'leave' }, ({ key, leftPresences }) => {
-    if (localPlayer.isHost) {
-      leftPresences.forEach(p => {
-        handleBCMessage({ data: { type: MSG.PLAYER_LEAVE, playerId: p.playerId } });
-      });
-    }
-  });
+  // Disabled aggressive presence 'leave' since it prematurely kicks 
+  // mobile players whose screens fall asleep. We now rely exclusively
+  // on beforeunload (and explicit leaves) to clean up.
 
   bc.subscribe((status) => {
     if (status === 'SUBSCRIBED') {
@@ -650,6 +646,14 @@ function handleBCMessage(event) {
       if (msg.playerId !== localPlayer.id) return;
       mySecretMission = msg.mission;
       renderCurrentView();
+      break;
+    }
+    case 'HELLO': {
+      if (!localPlayer.isHost) return;
+      // Resync state to the player who just woke up / reconnected
+      if (msg.playerId !== localPlayer.id) {
+        hostBroadcast();
+      }
       break;
     }
   }
