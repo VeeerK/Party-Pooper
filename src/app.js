@@ -86,7 +86,7 @@ const DEFAULT_CONTENT = {
 // External content hook — replace this function to plug in external banks
 function getContent(key) {
   try {
-    const raw = localStorage.getItem('pp_content_v2');
+    const raw = localStorage.getItem('pp_content_v3');
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed[key] && Array.isArray(parsed[key]) && parsed[key].length > 0) return parsed[key];
@@ -97,10 +97,10 @@ function getContent(key) {
 
 function saveContent(key, arr) {
   try {
-    const raw = localStorage.getItem('pp_content_v2');
+    const raw = localStorage.getItem('pp_content_v3');
     const all = raw ? JSON.parse(raw) : {};
     all[key] = arr;
-    localStorage.setItem('pp_content_v2', JSON.stringify(all));
+    localStorage.setItem('pp_content_v3', JSON.stringify(all));
   } catch (_) {}
 }
 
@@ -120,7 +120,7 @@ function deleteContentItem(key, idx) {
 }
 
 function resetContent() {
-  localStorage.removeItem('pp_content_v2');
+  localStorage.removeItem('pp_content_v3');
 }
 
 // ═══════════════════════════════════════════════════════════
