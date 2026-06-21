@@ -1006,20 +1006,11 @@ function runBotAction(stage, ctx = {}) {
 function startYouseem() {
   clearTimer();
   const opts = roomState.settings.yseem;
-  const allYseem = getContent('yseem');
-  const actionables = shuffle(allYseem.filter(q => q.startsWith('[ACTION]')));
-  const normals = shuffle(allYseem.filter(q => !q.startsWith('[ACTION]')));
+  const allYseem = shuffle(getContent('yseem'));
   const questions = [];
-  let aIdx = 0, nIdx = 0;
   for (let i = 0; i < opts.rounds; i++) {
-    let isBonus = Math.random() < 0.33 && aIdx < actionables.length;
-    if (isBonus) {
-      questions.push({ text: actionables[aIdx++].replace('[ACTION] ', '').trim(), isBonus: true });
-    } else {
-      let q = normals.length > 0 ? normals[nIdx % normals.length] : actionables[aIdx % actionables.length];
-      questions.push({ text: q.replace('[ACTION] ', '').trim(), isBonus: false });
-      nIdx++;
-    }
+    let q = allYseem[i % allYseem.length];
+    questions.push({ text: q.replace('[ACTION] ', '').trim(), isBonus: true });
   }
   roomState.gameData = {
     game: 'yseem', round: 0, totalRounds: questions.length,
